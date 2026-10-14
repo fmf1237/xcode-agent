@@ -2,7 +2,7 @@
 from typing import Callable
 
 from .context import ContextManager
-from .llm import ChatClient, LLMError
+from .llm import ChatClient
 from .tools import ToolRegistry
 
 
@@ -12,6 +12,10 @@ class AgentLLMError(Exception):
 
 class MaxRoundsExceeded(Exception):
     """The model did not produce a final answer within the round budget."""
+
+
+class AgentCancelled(Exception):
+    """Cooperative cancellation observed between blocking operations."""
 
 
 class Agent:
@@ -27,20 +31,28 @@ class Agent:
         if self.logger:
             self.logger(message)
 
-    def run(self, user_input: str) -> str:
+    def run(self, user_input: str, cancelled: Callable[[], bool] | None = None) -> str:
+        def check_cancelled() -> None:
+            if cancelled is not None and cancelled():
+                raise AgentCancelled("Agent execution cancelled")
+
+        check_cancelled()
         self.context.add({"role": "user", "content": user_input})
         self.context.trim()
         for round_number in range(1, self.max_rounds + 1):
+            check_cancelled()
             self._log(f"Round {round_number}: requesting model")
             try:
                 response = self.llm.chat(self.context.messages, self.tools.schemas())
             except Exception as exc:
                 raise AgentLLMError(str(exc)) from exc
+            check_cancelled()
             if response.tool_calls:
                 calls = [{"id": call.id, "type": "function", "function": {"name": call.name,
                           "arguments": call.arguments}} for call in response.tool_calls]
                 self.context.add({"role": "assistant", "content": response.content, "tool_calls": calls})
                 for call in response.tool_calls:
+                    check_cancelled()
                     self._log(f"Tool {call.name} ({call.id})")
                     result = self.tools.execute(call.name, call.arguments)
                     self.context.add({"role": "tool", "tool_call_id": call.id, "content": result.as_message()})
@@ -48,6 +60,7 @@ class Agent:
                 self.context.trim()
                 continue
             answer = response.content or ""
+            check_cancelled()
             self.context.add({"role": "assistant", "content": answer})
             self.context.trim()
             self._log(f"Final answer: {answer}")

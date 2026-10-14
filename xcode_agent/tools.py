@@ -1,5 +1,6 @@
 """Tool definitions and standardized execution boundary."""
 import json
+from threading import RLock
 from collections.abc import Callable
 from typing import Any
 
@@ -18,6 +19,7 @@ class ToolResult(BaseModel):
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, tuple[str, type[BaseModel], Callable[..., Any]]] = {}
+        self._shared_lock = RLock()
 
     def register(self, name: str, description: str, arguments: type[BaseModel], handler: Callable[..., Any]) -> None:
         if not name or name in self._tools:
@@ -27,6 +29,19 @@ class ToolRegistry:
     def get(self, name: str) -> Callable[..., Any] | None:
         entry = self._tools.get(name)
         return entry[2] if entry else None
+
+    def clone(self, synchronize_handlers: bool = True) -> "ToolRegistry":
+        """Snapshot definitions; optionally serialize calls to shared handler objects."""
+        clone = ToolRegistry()
+        for name, (description, arguments, handler) in self._tools.items():
+            if synchronize_handlers:
+                def guarded(*args: Any, _handler: Callable[..., Any] = handler, **kwargs: Any) -> Any:
+                    with self._shared_lock:
+                        return _handler(*args, **kwargs)
+                clone.register(name, description, arguments, guarded)
+            else:
+                clone.register(name, description, arguments, handler)
+        return clone
 
     def schemas(self) -> list[dict[str, Any]]:
         return [
