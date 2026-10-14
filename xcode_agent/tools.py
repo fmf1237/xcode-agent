@@ -1,0 +1,53 @@
+"""Tool definitions and standardized execution boundary."""
+import json
+from collections.abc import Callable
+from typing import Any
+
+from pydantic import BaseModel, ValidationError
+
+
+class ToolResult(BaseModel):
+    ok: bool
+    content: Any = None
+    error: str | None = None
+
+    def as_message(self) -> str:
+        return self.model_dump_json()
+
+
+class ToolRegistry:
+    def __init__(self) -> None:
+        self._tools: dict[str, tuple[str, type[BaseModel], Callable[..., Any]]] = {}
+
+    def register(self, name: str, description: str, arguments: type[BaseModel], handler: Callable[..., Any]) -> None:
+        if not name or name in self._tools:
+            raise ValueError(f"Invalid or duplicate tool name: {name}")
+        self._tools[name] = (description, arguments, handler)
+
+    def get(self, name: str) -> Callable[..., Any] | None:
+        entry = self._tools.get(name)
+        return entry[2] if entry else None
+
+    def schemas(self) -> list[dict[str, Any]]:
+        return [
+            {"type": "function", "function": {"name": name, "description": description,
+             "parameters": arguments.model_json_schema()}}
+            for name, (description, arguments, _) in self._tools.items()
+        ]
+
+    def execute(self, name: str, raw_arguments: str) -> ToolResult:
+        entry = self._tools.get(name)
+        if entry is None:
+            return ToolResult(ok=False, error=f"Unknown tool: {name}")
+        _, arguments, handler = entry
+        try:
+            data = json.loads(raw_arguments)
+            if not isinstance(data, dict):
+                raise ValueError("Arguments must be a JSON object")
+            parsed = arguments.model_validate(data)
+        except (ValueError, ValidationError) as exc:
+            return ToolResult(ok=False, error=f"Invalid arguments: {exc}")
+        try:
+            return ToolResult(ok=True, content=handler(**parsed.model_dump()))
+        except Exception as exc:
+            return ToolResult(ok=False, error=f"Tool execution failed ({type(exc).__name__}): {exc}")

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xcode-agent"
+version = "0.1.0"
+description = "A small, provider-independent Python agent foundation"
+requires-python = ">=3.11"
+dependencies = ["openai>=1.0,<3", "pydantic>=2,<3", "python-dotenv>=1,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[tool.setuptools.packages.find]
+include = ["xcode_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
