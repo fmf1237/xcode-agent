@@ -1,5 +1,6 @@
 """Small SQLite FTS5 memory store with transactional index maintenance."""
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 import re
 import sqlite3
@@ -20,6 +21,45 @@ class MemoryItem(BaseModel):
 
 class MemoryStoreError(RuntimeError):
     """The memory database is unavailable or lacks FTS5 support."""
+
+
+def _normalized_content(content: str) -> str:
+    """Ignore case, spacing and punctuation for conservative duplicate checks."""
+    return "".join(re.findall(r"[^\W_]+", content.casefold(), flags=re.UNICODE))
+
+
+def select_memories(items: list[MemoryItem], *, top_k: int, char_budget: int) -> list[MemoryItem]:
+    """Keep complete, distinct BM25-ranked notes that fit a character budget.
+
+    The budget includes the ``- `` prefix and trailing newline for each note;
+    callers account for their own heading separately. This never edits stored text.
+    """
+    if not isinstance(top_k, int) or isinstance(top_k, bool) or not 1 <= top_k <= MemoryStore.MAX_TOP_K:
+        raise ValueError(f"top_k must be between 1 and {MemoryStore.MAX_TOP_K}")
+    if not isinstance(char_budget, int) or isinstance(char_budget, bool) or char_budget < 0:
+        raise ValueError("char_budget must be nonnegative")
+    chosen: list[MemoryItem] = []
+    fingerprints: list[str] = []
+    for item in sorted(items, key=lambda note: (note.score is None, note.score or 0)):
+        normalized = _normalized_content(item.content)
+        if not normalized:
+            continue
+        if any(normalized == prior or (
+            min(len(normalized), len(prior)) >= 40
+            and SequenceMatcher(None, normalized, prior).ratio() >= 0.98
+            and re.findall(r"\d+", normalized) == re.findall(r"\d+", prior)
+        ) for prior in fingerprints):
+            continue
+        # A whole note is either included or skipped; partial constraints are unsafe.
+        size = len("- " + item.content.replace("\r", " ").replace("\n", " ") + "\n")
+        if size > char_budget:
+            continue
+        chosen.append(item)
+        fingerprints.append(normalized)
+        char_budget -= size
+        if len(chosen) >= top_k:
+            break
+    return chosen
 
 
 class MemoryStore:

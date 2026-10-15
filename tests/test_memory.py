@@ -96,18 +96,14 @@ def test_closed_store_raises():
         store.search("n", "!!!")
 
 
-def test_agent_injects_only_budgeted_ephemeral_memory():
+def test_agent_skips_oversized_memory_instead_of_truncating_it():
     with MemoryStore() as store:
         store.save("notes", "alpha " + "x" * 200)
         llm = CaptureLLM()
         agent = Agent(llm, ToolRegistry(), memory=store, memory_namespace="notes",
                       memory_top_k=1, memory_char_budget=90)
         assert agent.run("alpha") == "ok"
-        injected = llm.requests[0][0]
-        assert injected["role"] == "user" and "Retrieved saved notes" in injected["content"]
-        assert "alpha" in injected["content"]
-        assert len(injected["content"]) <= 90
-        assert llm.requests[0][-1] == {"role": "user", "content": "alpha"}
+        assert llm.requests[0] == [{"role": "user", "content": "alpha"}]
         assert [message["role"] for message in agent.context.messages] == ["user", "assistant"]
         assert all("saved notes" not in str(message) for message in agent.context.messages)
 
