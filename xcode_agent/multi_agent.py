@@ -13,6 +13,7 @@ from .context import ContextManager
 from .llm import ChatClient
 from .tools import ToolRegistry
 from .tracing import TraceRecorder
+from .memory import MemoryStore
 from .errors import AgentTimeoutError, DependencyFailedError
 
 Role = Literal["orchestrator", "leaf"]
@@ -93,13 +94,29 @@ class AgentHandle:
 class AgentFactory:
     def __init__(self, llm_factory: Callable[[], ChatClient], tools: ToolRegistry,
                  max_depth: int = 1, history_limit: int = 40, max_rounds: int = 8,
-                 synchronize_tools: bool = True, trace: TraceRecorder | None = None):
+                 synchronize_tools: bool = True, trace: TraceRecorder | None = None,
+                 memory: MemoryStore | None = None, shared_memory_namespace: str | None = None,
+                 memory_top_k: int = 5, memory_char_budget: int = 2_000):
         if max_depth < 0 or history_limit < 1 or max_rounds < 1:
             raise ValueError("Invalid factory limits")
+        if memory is None and shared_memory_namespace is not None:
+            raise ValueError("shared_memory_namespace requires a memory store")
+        if (shared_memory_namespace is not None and
+                (not isinstance(shared_memory_namespace, str) or not shared_memory_namespace.strip() or
+                 len(shared_memory_namespace) > 128)):
+            raise ValueError("Invalid shared_memory_namespace")
+        if (not isinstance(memory_top_k, int) or isinstance(memory_top_k, bool) or
+                not 1 <= memory_top_k <= MemoryStore.MAX_TOP_K or
+                not isinstance(memory_char_budget, int) or isinstance(memory_char_budget, bool) or
+                memory_char_budget < 1):
+            raise ValueError("Invalid memory retrieval limits")
         self.llm_factory, self.tools = llm_factory, tools
         self.max_depth, self.history_limit, self.max_rounds = max_depth, history_limit, max_rounds
         self.synchronize_tools = synchronize_tools
         self.trace = trace if trace is not None else TraceRecorder()
+        self.memory = memory
+        self.shared_memory_namespace = shared_memory_namespace
+        self.memory_top_k, self.memory_char_budget = memory_top_k, memory_char_budget
         self._identity_lock = Lock()
         self._identities: dict[str, AgentIdentity] = {}
 
@@ -117,7 +134,11 @@ class AgentFactory:
                                  role=role, depth=depth)
         agent = Agent(self.llm_factory(), self.tools.clone(self.synchronize_tools),
                       ContextManager(self.history_limit), self.max_rounds,
-                      trace=self.trace, agent_id=identity.agent_id)
+                      trace=self.trace, agent_id=identity.agent_id,
+                      memory=self.memory,
+                      memory_namespace=self.shared_memory_namespace if self.memory is not None and
+                      self.shared_memory_namespace is not None else None,
+                      memory_top_k=self.memory_top_k, memory_char_budget=self.memory_char_budget)
         with self._identity_lock:
             self._identities[identity.agent_id] = identity.model_copy(deep=True)
         return AgentHandle(identity, agent, self)

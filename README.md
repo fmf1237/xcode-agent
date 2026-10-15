@@ -38,6 +38,10 @@ python -m pytest -q
 
 演示与离线评测都不需要 API Key 或网络。第三阶段评测结果写入 `reports/phase3/benchmark.json` 和 `reports/phase3/benchmark.md`，仅代表固定 Mock 工作负载。真实 API 冒烟测试须手动运行 `python examples/phase3_live_smoke.py --live`；没有配置 Key 与模型时不会发送请求。示例文件是 `examples/demo.txt`。模块与消息流程见 [第一阶段学习笔记](docs/phase1-study.md)、[第二阶段学习笔记](docs/phase2-study.md)、[Trace 学习笔记](docs/phase3-trace-study.md)、[可靠性学习笔记](docs/phase3-reliability-study.md) 和 [评测学习笔记](docs/phase3-benchmark-study.md)。
 
+## 可选长期记忆
+
+第四阶段增加基于标准库 SQLite FTS5 的显式记忆存储。默认关闭，不会自动保存对话。调用方可用 `MemoryStore("memory.sqlite3").save("project", "文本")` 保存，再用 `Agent(..., memory=store, memory_namespace="project")` 在运行时按关键词检索。多 Agent 默认各用自身 ID 隔离 namespace，只有配置 `AgentFactory(..., shared_memory_namespace="project")` 才共享。接口和中文分词限制见 [长期记忆学习笔记](docs/phase4-memory-study.md)。
+
 ## 扩展接口
 
 `Agent` 仅依赖具有 `chat(messages, tools) -> LLMResponse` 方法的客户端及 `ToolRegistry`。`AgentFactory` 通过客户端工厂创建独立子 Agent；`AgentHandle.dispatch()` 接收 `TaskNode` 列表并按输入顺序返回 `SubAgentResult`，`dispatch_and_summarize()` 可将结果送回主 Agent 推理。工具通过 Pydantic 参数模型和 Python 函数注册；未来工具来源可以使用同一注册接口。当前上下文仅保存在内存中。
