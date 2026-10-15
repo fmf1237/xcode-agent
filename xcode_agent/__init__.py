@@ -8,8 +8,9 @@ from .tracing import TraceEvent, TraceRecorder
 from .memory import MemoryItem, MemoryStore, MemoryStoreError
 from .skills import SkillError, SkillInfo, SkillRegistry
 from .mcp_client import MCPClient, MCPConnectionError, MCPServerConfig, MCPToolInfo
+from .repo_map import RepoMap, RepoMapResult, RepoFile, RepoSymbol, RepoIssue, register_repo_map_tool
 from .errors import (AgentError, AgentTimeoutError, DependencyFailedError,
                      LLMTimeoutError, LLMRateLimitError, LLMTransientError,
                      ToolArgumentError, ToolExecutionError)
 
-__all__ = ["Agent", "AgentCancelled", "AgentLLMError", "AgentError", "AgentTimeoutError", "LLMTimeoutError", "LLMRateLimitError", "LLMTransientError", "ToolArgumentError", "ToolExecutionError", "DependencyFailedError", "MaxRoundsExceeded", "ContextManager", "LLMClient", "LLMResponse", "ToolCall", "ToolRegistry", "ToolResult", "AgentFactory", "AgentHandle", "AgentIdentity", "DAGScheduler", "DispatchError", "PlanError", "SubAgentResult", "TaskNode", "TraceEvent", "TraceRecorder", "MemoryItem", "MemoryStore", "MemoryStoreError", "SkillError", "SkillInfo", "SkillRegistry", "MCPClient", "MCPConnectionError", "MCPServerConfig", "MCPToolInfo"]
+__all__ = ["Agent", "AgentCancelled", "AgentLLMError", "AgentError", "AgentTimeoutError", "LLMTimeoutError", "LLMRateLimitError", "LLMTransientError", "ToolArgumentError", "ToolExecutionError", "DependencyFailedError", "MaxRoundsExceeded", "ContextManager", "LLMClient", "LLMResponse", "ToolCall", "ToolRegistry", "ToolResult", "AgentFactory", "AgentHandle", "AgentIdentity", "DAGScheduler", "DispatchError", "PlanError", "SubAgentResult", "TaskNode", "TraceEvent", "TraceRecorder", "MemoryItem", "MemoryStore", "MemoryStoreError", "SkillError", "SkillInfo", "SkillRegistry", "MCPClient", "MCPConnectionError", "MCPServerConfig", "MCPToolInfo", "RepoMap", "RepoMapResult", "RepoFile", "RepoSymbol", "RepoIssue", "register_repo_map_tool"]
