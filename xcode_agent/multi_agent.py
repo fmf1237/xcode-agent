@@ -8,10 +8,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from .agent import Agent
+from .agent import Agent, AgentCancelled
 from .context import ContextManager
 from .llm import ChatClient
 from .tools import ToolRegistry
+from .tracing import TraceRecorder
 
 Role = Literal["orchestrator", "leaf"]
 Status = Literal["pending", "running", "success", "failed", "skipped", "timed_out"]
@@ -53,27 +54,33 @@ class SubAgentResult(BaseModel):
     error: str | None = None
     duration_ms: float = Field(ge=0)
     worker_running: bool = False
+    run_id: str | None = None
 
 
 class AgentHandle:
     def __init__(self, identity: AgentIdentity, agent: Agent, factory: "AgentFactory"):
         self.identity, self.agent, self.factory = identity, agent, factory
+        self.last_run_id: str | None = None
 
-    def dispatch(self, tasks: list[TaskNode], max_workers: int = 4) -> list[SubAgentResult]:
+    def dispatch(self, tasks: list[TaskNode], max_workers: int = 4,
+                 *, run_id: str | None = None) -> list[SubAgentResult]:
         if self.identity.role != "orchestrator":
             raise DispatchError("Leaf agents cannot dispatch sub-agents")
         if self.identity.depth >= self.factory.max_depth:
             raise DispatchError(f"Maximum agent depth {self.factory.max_depth} exceeded")
         scheduler = DAGScheduler(self.factory, max_workers)
+        run_id = run_id or getattr(_worker, "run_id", None) or self.factory.trace.new_run_id()
+        self.last_run_id = run_id
         if getattr(_worker, "active", False):
-            return scheduler.run_inline(self, tasks)
-        return scheduler.run(self, tasks)
+            return scheduler.run_inline(self, tasks, run_id)
+        return scheduler.run(self, tasks, run_id)
 
     def reason_with_results(self, prompt: str, results: list[SubAgentResult]) -> str:
         if self.identity.role != "orchestrator":
             raise DispatchError("Leaf agents cannot synthesize a plan")
         payload = json.dumps([item.model_dump() for item in results], ensure_ascii=False)
-        return self.agent.run(f"{prompt}\n\nSub-agent results (JSON, in task order):\n{payload}")
+        return self.agent.run(f"{prompt}\n\nSub-agent results (JSON, in task order):\n{payload}",
+                              run_id=getattr(_worker, "run_id", None) or self.last_run_id)
 
     def dispatch_and_summarize(self, tasks: list[TaskNode], prompt: str,
                                max_workers: int = 4) -> tuple[list[SubAgentResult], str]:
@@ -84,12 +91,13 @@ class AgentHandle:
 class AgentFactory:
     def __init__(self, llm_factory: Callable[[], ChatClient], tools: ToolRegistry,
                  max_depth: int = 1, history_limit: int = 40, max_rounds: int = 8,
-                 synchronize_tools: bool = True):
+                 synchronize_tools: bool = True, trace: TraceRecorder | None = None):
         if max_depth < 0 or history_limit < 1 or max_rounds < 1:
             raise ValueError("Invalid factory limits")
         self.llm_factory, self.tools = llm_factory, tools
         self.max_depth, self.history_limit, self.max_rounds = max_depth, history_limit, max_rounds
         self.synchronize_tools = synchronize_tools
+        self.trace = trace if trace is not None else TraceRecorder()
         self._identity_lock = Lock()
         self._identities: dict[str, AgentIdentity] = {}
 
@@ -106,7 +114,8 @@ class AgentFactory:
                                  parent_agent_id=parent.identity.agent_id if parent else None,
                                  role=role, depth=depth)
         agent = Agent(self.llm_factory(), self.tools.clone(self.synchronize_tools),
-                      ContextManager(self.history_limit), self.max_rounds)
+                      ContextManager(self.history_limit), self.max_rounds,
+                      trace=self.trace, agent_id=identity.agent_id)
         with self._identity_lock:
             self._identities[identity.agent_id] = identity.model_copy(deep=True)
         return AgentHandle(identity, agent, self)
@@ -117,6 +126,20 @@ class DAGScheduler:
         if max_workers < 1:
             raise ValueError("max_workers must be positive")
         self.factory, self.max_workers = factory, max_workers
+
+    def _trace_task(self, run_id: str, parent: AgentHandle, node: TaskNode,
+                    event_type: str, *, agent_id: str | None = None,
+                    duration_ms: float | None = None, success: bool | None = None,
+                    error_type: str | None = None, worker_running: bool | None = None) -> None:
+        parent_task_id = getattr(_worker, "task_id", None)
+        metadata = {"task_id": node.task_id, "parent_agent_id": parent.identity.agent_id,
+                    "parent_task_id": None if parent_task_id == node.task_id else parent_task_id,
+                    "role": node.role}
+        if worker_running is not None:
+            metadata["worker_running"] = worker_running
+        self.factory.trace.record(run_id, agent_id or parent.identity.agent_id, event_type,
+                                  duration_ms=duration_ms, success=success,
+                                  error_type=error_type, metadata=metadata)
 
     @staticmethod
     def validate(tasks: list[TaskNode]) -> None:
@@ -149,9 +172,11 @@ class DAGScheduler:
         for task_id in ids:
             visit(task_id)
 
-    def run_inline(self, parent: AgentHandle, tasks: list[TaskNode]) -> list[SubAgentResult]:
+    def run_inline(self, parent: AgentHandle, tasks: list[TaskNode],
+                   run_id: str | None = None) -> list[SubAgentResult]:
         """Worker-side nested plan: same worker, no nested thread pool or deadlock."""
         self.validate(tasks)
+        run_id = run_id or getattr(_worker, "run_id", None) or self.factory.trace.new_run_id()
         nodes = {task.task_id: task.model_copy(deep=True) for task in tasks}
         results: dict[str, SubAgentResult] = {}
         while len(results) < len(nodes):
@@ -164,33 +189,49 @@ class DAGScheduler:
                 if bad:
                     node.status, node.error = "skipped", f"Failed dependency: {', '.join(bad)}"
                     results[node.task_id] = SubAgentResult(task_id=node.task_id, agent_id=None,
-                                                           status="skipped", error=node.error, duration_ms=0)
+                                                           status="skipped", error=node.error, duration_ms=0,
+                                                           run_id=run_id)
+                    self._trace_task(run_id, parent, node, "task_skipped", success=False,
+                                     error_type="DependencyFailed")
                     continue
                 handle = self.factory.create(node.role, parent)
+                self._trace_task(run_id, parent, node, "child_created", agent_id=handle.identity.agent_id)
                 start = time.monotonic()
                 node.status = "running"
+                self._trace_task(run_id, parent, node, "child_start", agent_id=handle.identity.agent_id)
                 try:
                     output = self._run_child(handle, node, [results[dep] for dep in node.depends_on],
-                                             lambda: node.timeout_s is not None and time.monotonic() - start >= node.timeout_s)
+                                             lambda: node.timeout_s is not None and time.monotonic() - start >= node.timeout_s,
+                                             run_id)
                     if node.timeout_s is not None and time.monotonic() - start >= node.timeout_s:
                         node.status, node.error = "timed_out", f"Task budget {node.timeout_s}s exceeded"
                     else:
                         node.status, node.result = "success", output
                 except Exception as exc:
+                    if isinstance(exc, AgentCancelled):
+                        self._trace_task(run_id, parent, node, "task_cancelled", agent_id=handle.identity.agent_id,
+                                         duration_ms=(time.monotonic() - start) * 1000,
+                                         success=False, error_type="AgentCancelled")
                     if node.timeout_s is not None and time.monotonic() - start >= node.timeout_s:
                         node.status, node.error = "timed_out", f"Task budget {node.timeout_s}s exceeded"
                     else:
                         node.status, node.error = "failed", f"{type(exc).__name__}: {exc}"
                 results[node.task_id] = SubAgentResult(task_id=node.task_id, agent_id=handle.identity.agent_id,
                     status=node.status, output=node.result, error=node.error,
-                    duration_ms=(time.monotonic() - start) * 1000)
+                    duration_ms=(time.monotonic() - start) * 1000, run_id=run_id)
+                self._trace_task(run_id, parent, node, "task_" + node.status,
+                                 agent_id=handle.identity.agent_id,
+                                 duration_ms=results[node.task_id].duration_ms,
+                                 success=node.status == "success",
+                                 error_type=None if node.status == "success" else
+                                 ("Timeout" if node.status == "timed_out" else "ChildTaskError"))
             if not progressed:
                 raise RuntimeError("Nested DAG scheduler made no progress")
         return [results[task.task_id] for task in tasks]
 
     @staticmethod
     def _run_child(handle: AgentHandle, node: TaskNode, dependencies: list[SubAgentResult],
-                   cancelled: Callable[[], bool]) -> str:
+                   cancelled: Callable[[], bool], run_id: str | None = None) -> str:
         if node.subtasks:
             nested = handle.dispatch(node.subtasks)
             return handle.reason_with_results(node.description, nested)
@@ -198,10 +239,12 @@ class DAGScheduler:
         if dependencies:
             prompt += "\n\nCompleted dependencies (JSON):\n" + json.dumps(
                 [item.model_dump() for item in dependencies], ensure_ascii=False)
-        return handle.agent.run(prompt, cancelled=cancelled)
+        return handle.agent.run(prompt, cancelled=cancelled, run_id=run_id)
 
-    def run(self, parent: AgentHandle, tasks: list[TaskNode]) -> list[SubAgentResult]:
+    def run(self, parent: AgentHandle, tasks: list[TaskNode],
+            run_id: str | None = None) -> list[SubAgentResult]:
         self.validate(tasks)
+        run_id = run_id or self.factory.trace.new_run_id()
         if parent.identity.role != "orchestrator":
             raise DispatchError("Leaf agents cannot dispatch sub-agents")
         if parent.identity.depth >= self.factory.max_depth:
@@ -214,11 +257,20 @@ class DAGScheduler:
 
         def execute(handle: AgentHandle, node: TaskNode, stop: Event) -> str:
             _worker.active = True
+            _worker.run_id = run_id
+            _worker.task_id = node.task_id
             try:
+                self._trace_task(run_id, parent, node, "child_start", agent_id=handle.identity.agent_id)
                 dependencies = [results[task_id] for task_id in node.depends_on]
-                return self._run_child(handle, node, dependencies, stop.is_set)
+                return self._run_child(handle, node, dependencies, stop.is_set, run_id)
+            except AgentCancelled:
+                self._trace_task(run_id, parent, node, "task_cancelled", agent_id=handle.identity.agent_id,
+                                 success=False, error_type="AgentCancelled")
+                raise
             finally:
                 _worker.active = False
+                _worker.run_id = None
+                _worker.task_id = None
 
         try:
             while len(results) < len(nodes):
@@ -229,13 +281,17 @@ class DAGScheduler:
                     if bad:
                         node.status, node.error = "skipped", f"Failed dependency: {', '.join(bad)}"
                         results[node.task_id] = SubAgentResult(task_id=node.task_id, agent_id=None,
-                                                               status="skipped", error=node.error, duration_ms=0)
+                                                               status="skipped", error=node.error, duration_ms=0,
+                                                               run_id=run_id)
+                        self._trace_task(run_id, parent, node, "task_skipped", success=False,
+                                         error_type="DependencyFailed")
                 for node in nodes.values():
                     if len(active) >= self.max_workers:
                         break
                     if node.status != "pending" or any(dep not in results for dep in node.depends_on):
                         continue
                     handle = self.factory.create(node.role, parent)
+                    self._trace_task(run_id, parent, node, "child_created", agent_id=handle.identity.agent_id)
                     stop = Event()
                     start = time.monotonic()
                     node.status = "running"
@@ -260,11 +316,17 @@ class DAGScheduler:
                     duration = (now - start) * 1000
                     if expired:
                         stop.set()
-                        future.cancel()
+                        cancelled_before_start = future.cancel()
                         node.status, node.error = "timed_out", f"Task budget {node.timeout_s}s exceeded; worker may still run"
                         item = SubAgentResult(task_id=node.task_id, agent_id=handle.identity.agent_id,
                                               status="timed_out", error=node.error, duration_ms=duration,
-                                              worker_running=not future.done())
+                                              worker_running=not future.done(), run_id=run_id)
+                        self._trace_task(run_id, parent, node, "task_timed_out", agent_id=handle.identity.agent_id,
+                                         duration_ms=duration, success=False, error_type="Timeout",
+                                         worker_running=item.worker_running)
+                        if cancelled_before_start:
+                            self._trace_task(run_id, parent, node, "task_cancelled", agent_id=handle.identity.agent_id,
+                                             duration_ms=duration, success=False, error_type="FutureCancelled")
                         if item.worker_running:
                             def completed(_future: Future[str], _item: SubAgentResult = item) -> None:
                                 with result_lock:
@@ -275,11 +337,17 @@ class DAGScheduler:
                             output = future.result()
                             node.status, node.result = "success", output
                             item = SubAgentResult(task_id=node.task_id, agent_id=handle.identity.agent_id,
-                                                  status="success", output=output, duration_ms=duration)
+                                                  status="success", output=output, duration_ms=duration,
+                                                  run_id=run_id)
+                            self._trace_task(run_id, parent, node, "task_success", agent_id=handle.identity.agent_id,
+                                             duration_ms=duration, success=True)
                         except Exception as exc:
                             node.status, node.error = "failed", f"{type(exc).__name__}: {exc}"
                             item = SubAgentResult(task_id=node.task_id, agent_id=handle.identity.agent_id,
-                                                  status="failed", error=node.error, duration_ms=duration)
+                                                  status="failed", error=node.error, duration_ms=duration,
+                                                  run_id=run_id)
+                            self._trace_task(run_id, parent, node, "task_failed", agent_id=handle.identity.agent_id,
+                                             duration_ms=duration, success=False, error_type=type(exc).__name__)
                     results[node.task_id] = item
             return [results[task.task_id] for task in tasks]
         finally:
