@@ -4,13 +4,16 @@ from threading import RLock
 from collections.abc import Callable
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
+
+from .errors import ToolArgumentError, ToolExecutionError
 
 
 class ToolResult(BaseModel):
     ok: bool
     content: Any = None
     error: str | None = None
+    error_code: str | None = Field(default=None, exclude=True)
 
     def as_message(self) -> str:
         return self.model_dump_json()
@@ -53,7 +56,7 @@ class ToolRegistry:
     def execute(self, name: str, raw_arguments: str) -> ToolResult:
         entry = self._tools.get(name)
         if entry is None:
-            return ToolResult(ok=False, error=f"Unknown tool: {name}")
+            return ToolResult(ok=False, error=f"Unknown tool: {name}", error_code="tool_not_found")
         _, arguments, handler = entry
         try:
             data = json.loads(raw_arguments)
@@ -61,8 +64,10 @@ class ToolRegistry:
                 raise ValueError("Arguments must be a JSON object")
             parsed = arguments.model_validate(data)
         except (ValueError, ValidationError) as exc:
-            return ToolResult(ok=False, error=f"Invalid arguments: {exc}")
+            return ToolResult(ok=False, error=f"Invalid arguments: {exc}",
+                              error_code=ToolArgumentError.error_code)
         try:
             return ToolResult(ok=True, content=handler(**parsed.model_dump()))
         except Exception as exc:
-            return ToolResult(ok=False, error=f"Tool execution failed ({type(exc).__name__}): {exc}")
+            return ToolResult(ok=False, error=f"Tool execution failed ({type(exc).__name__}): {exc}",
+                              error_code=ToolExecutionError.error_code)

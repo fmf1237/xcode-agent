@@ -24,7 +24,8 @@ class TraceRecorder:
     """Store events by run ID; return copies so callers cannot alter stored history."""
 
     _METADATA_KEYS = frozenset({"task_id", "parent_agent_id", "parent_task_id", "role",
-                                "round", "tool_name", "tool_call_id", "worker_running"})
+                                "round", "tool_name", "tool_call_id", "worker_running",
+                                "attempt", "max_attempts", "delay_ms", "error_code", "retryable"})
 
     def __init__(self) -> None:
         self._lock = RLock()

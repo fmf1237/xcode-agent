@@ -13,6 +13,7 @@ from .context import ContextManager
 from .llm import ChatClient
 from .tools import ToolRegistry
 from .tracing import TraceRecorder
+from .errors import AgentTimeoutError, DependencyFailedError
 
 Role = Literal["orchestrator", "leaf"]
 Status = Literal["pending", "running", "success", "failed", "skipped", "timed_out"]
@@ -55,6 +56,7 @@ class SubAgentResult(BaseModel):
     duration_ms: float = Field(ge=0)
     worker_running: bool = False
     run_id: str | None = None
+    error_code: str | None = Field(default=None, exclude=True)
 
 
 class AgentHandle:
@@ -130,11 +132,12 @@ class DAGScheduler:
     def _trace_task(self, run_id: str, parent: AgentHandle, node: TaskNode,
                     event_type: str, *, agent_id: str | None = None,
                     duration_ms: float | None = None, success: bool | None = None,
-                    error_type: str | None = None, worker_running: bool | None = None) -> None:
+                    error_type: str | None = None, worker_running: bool | None = None,
+                    error_code: str | None = None) -> None:
         parent_task_id = getattr(_worker, "task_id", None)
         metadata = {"task_id": node.task_id, "parent_agent_id": parent.identity.agent_id,
                     "parent_task_id": None if parent_task_id == node.task_id else parent_task_id,
-                    "role": node.role}
+                    "role": node.role, "error_code": error_code}
         if worker_running is not None:
             metadata["worker_running"] = worker_running
         self.factory.trace.record(run_id, agent_id or parent.identity.agent_id, event_type,
@@ -190,15 +193,18 @@ class DAGScheduler:
                     node.status, node.error = "skipped", f"Failed dependency: {', '.join(bad)}"
                     results[node.task_id] = SubAgentResult(task_id=node.task_id, agent_id=None,
                                                            status="skipped", error=node.error, duration_ms=0,
-                                                           run_id=run_id)
+                                                           run_id=run_id,
+                                                           error_code=DependencyFailedError.error_code)
                     self._trace_task(run_id, parent, node, "task_skipped", success=False,
-                                     error_type="DependencyFailed")
+                                     error_type="DependencyFailedError",
+                                     error_code=DependencyFailedError.error_code)
                     continue
                 handle = self.factory.create(node.role, parent)
                 self._trace_task(run_id, parent, node, "child_created", agent_id=handle.identity.agent_id)
                 start = time.monotonic()
                 node.status = "running"
                 self._trace_task(run_id, parent, node, "child_start", agent_id=handle.identity.agent_id)
+                failure_code: str | None = None
                 try:
                     output = self._run_child(handle, node, [results[dep] for dep in node.depends_on],
                                              lambda: node.timeout_s is not None and time.monotonic() - start >= node.timeout_s,
@@ -211,20 +217,26 @@ class DAGScheduler:
                     if isinstance(exc, AgentCancelled):
                         self._trace_task(run_id, parent, node, "task_cancelled", agent_id=handle.identity.agent_id,
                                          duration_ms=(time.monotonic() - start) * 1000,
-                                         success=False, error_type="AgentCancelled")
+                                         success=False, error_type="AgentCancelled",
+                                         error_code=AgentCancelled.error_code)
                     if node.timeout_s is not None and time.monotonic() - start >= node.timeout_s:
                         node.status, node.error = "timed_out", f"Task budget {node.timeout_s}s exceeded"
                     else:
                         node.status, node.error = "failed", f"{type(exc).__name__}: {exc}"
+                        failure_code = getattr(exc, "error_code", "child_task_error")
+                if node.status == "timed_out":
+                    failure_code = AgentTimeoutError.error_code
                 results[node.task_id] = SubAgentResult(task_id=node.task_id, agent_id=handle.identity.agent_id,
                     status=node.status, output=node.result, error=node.error,
-                    duration_ms=(time.monotonic() - start) * 1000, run_id=run_id)
+                    duration_ms=(time.monotonic() - start) * 1000, run_id=run_id,
+                    error_code=failure_code)
                 self._trace_task(run_id, parent, node, "task_" + node.status,
                                  agent_id=handle.identity.agent_id,
                                  duration_ms=results[node.task_id].duration_ms,
                                  success=node.status == "success",
                                  error_type=None if node.status == "success" else
-                                 ("Timeout" if node.status == "timed_out" else "ChildTaskError"))
+                                 ("Timeout" if node.status == "timed_out" else "ChildTaskError"),
+                                 error_code=failure_code)
             if not progressed:
                 raise RuntimeError("Nested DAG scheduler made no progress")
         return [results[task.task_id] for task in tasks]
@@ -265,7 +277,8 @@ class DAGScheduler:
                 return self._run_child(handle, node, dependencies, stop.is_set, run_id)
             except AgentCancelled:
                 self._trace_task(run_id, parent, node, "task_cancelled", agent_id=handle.identity.agent_id,
-                                 success=False, error_type="AgentCancelled")
+                                 success=False, error_type="AgentCancelled",
+                                 error_code=AgentCancelled.error_code)
                 raise
             finally:
                 _worker.active = False
@@ -282,9 +295,11 @@ class DAGScheduler:
                         node.status, node.error = "skipped", f"Failed dependency: {', '.join(bad)}"
                         results[node.task_id] = SubAgentResult(task_id=node.task_id, agent_id=None,
                                                                status="skipped", error=node.error, duration_ms=0,
-                                                               run_id=run_id)
+                                                               run_id=run_id,
+                                                               error_code=DependencyFailedError.error_code)
                         self._trace_task(run_id, parent, node, "task_skipped", success=False,
-                                         error_type="DependencyFailed")
+                                         error_type="DependencyFailedError",
+                                         error_code=DependencyFailedError.error_code)
                 for node in nodes.values():
                     if len(active) >= self.max_workers:
                         break
@@ -320,13 +335,16 @@ class DAGScheduler:
                         node.status, node.error = "timed_out", f"Task budget {node.timeout_s}s exceeded; worker may still run"
                         item = SubAgentResult(task_id=node.task_id, agent_id=handle.identity.agent_id,
                                               status="timed_out", error=node.error, duration_ms=duration,
-                                              worker_running=not future.done(), run_id=run_id)
+                                              worker_running=not future.done(), run_id=run_id,
+                                              error_code=AgentTimeoutError.error_code)
                         self._trace_task(run_id, parent, node, "task_timed_out", agent_id=handle.identity.agent_id,
                                          duration_ms=duration, success=False, error_type="Timeout",
-                                         worker_running=item.worker_running)
+                                         worker_running=item.worker_running,
+                                         error_code=AgentTimeoutError.error_code)
                         if cancelled_before_start:
                             self._trace_task(run_id, parent, node, "task_cancelled", agent_id=handle.identity.agent_id,
-                                             duration_ms=duration, success=False, error_type="FutureCancelled")
+                                             duration_ms=duration, success=False, error_type="FutureCancelled",
+                                             error_code=AgentCancelled.error_code)
                         if item.worker_running:
                             def completed(_future: Future[str], _item: SubAgentResult = item) -> None:
                                 with result_lock:
@@ -345,9 +363,11 @@ class DAGScheduler:
                             node.status, node.error = "failed", f"{type(exc).__name__}: {exc}"
                             item = SubAgentResult(task_id=node.task_id, agent_id=handle.identity.agent_id,
                                                   status="failed", error=node.error, duration_ms=duration,
-                                                  run_id=run_id)
+                                                  run_id=run_id,
+                                                  error_code=getattr(exc, "error_code", "child_task_error"))
                             self._trace_task(run_id, parent, node, "task_failed", agent_id=handle.identity.agent_id,
-                                             duration_ms=duration, success=False, error_type=type(exc).__name__)
+                                             duration_ms=duration, success=False, error_type=type(exc).__name__,
+                                             error_code=item.error_code)
                     results[node.task_id] = item
             return [results[task.task_id] for task in tasks]
         finally:

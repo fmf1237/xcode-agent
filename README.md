@@ -25,6 +25,8 @@ python main.py
 
 输入问题后可连续对话；输入 `reset` 清空会话，`exit` 退出。`AGENT_VERBOSE=true` 会打印模型轮次、工具调用和结果。`AGENT_MAX_ROUNDS` 控制每次 `run()` 最多调用模型的次数，`AGENT_HISTORY_LIMIT` 是消息数的软上限，历史只按完整用户轮次裁剪。
 
+`OPENAI_TIMEOUT` 是单次模型请求超时。`OPENAI_RETRIES=2` 表示首次请求之外最多重试 2 次；仅对明确可重试的非流式模型请求生效，SDK 内置重试已关闭。程序调用方还可使用 `agent.run(question, total_timeout_s=5)` 设置整次 Agent 运行的截止时间。工具操作不会自动重试。
+
 ## 离线演示与测试
 
 ```powershell
@@ -33,7 +35,7 @@ python examples/phase2_benchmark.py
 python -m pytest -q
 ```
 
-演示与基准都不需要 API Key 或网络。示例文件是 `examples/demo.txt`。模块与消息流程见 [第一阶段学习笔记](docs/phase1-study.md) 和 [第二阶段学习笔记](docs/phase2-study.md)。
+演示与基准都不需要 API Key 或网络。示例文件是 `examples/demo.txt`。模块与消息流程见 [第一阶段学习笔记](docs/phase1-study.md)、[第二阶段学习笔记](docs/phase2-study.md)、[Trace 学习笔记](docs/phase3-trace-study.md) 和 [可靠性学习笔记](docs/phase3-reliability-study.md)。
 
 ## 扩展接口
 

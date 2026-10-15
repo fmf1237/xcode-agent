@@ -4,6 +4,8 @@ from typing import Any, Protocol
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from .errors import AgentLLMError, classify_llm_exception
+
 
 class ToolCall(BaseModel):
     id: str
@@ -20,8 +22,7 @@ class ChatClient(Protocol):
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResponse: ...
 
 
-class LLMError(Exception):
-    """Model transport or API failure after configured retries."""
+LLMError = AgentLLMError  # Keep the old import name for existing callers.
 
 
 class LLMClient:
@@ -31,7 +32,10 @@ class LLMClient:
         if timeout <= 0 or retries < 0:
             raise ValueError("timeout must be positive and retries nonnegative")
         self.model = model
-        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=retries)
+        self.streaming = False  # chat() returns only complete, non-stream responses.
+        self.max_attempts = retries + 1  # retries retains its existing public meaning.
+        # The Agent owns all retries so their count, cancellation and Trace stay observable.
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=0)
 
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResponse:
         try:
@@ -46,4 +50,7 @@ class LLMClient:
                             for call in (message.tool_calls or [])],
             )
         except Exception as exc:
-            raise LLMError(f"Model API request failed: {exc}") from exc
+            classified = classify_llm_exception(exc)
+            if classified is exc:
+                raise
+            raise classified from exc
