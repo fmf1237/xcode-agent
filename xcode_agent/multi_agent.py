@@ -14,6 +14,7 @@ from .llm import ChatClient
 from .tools import ToolRegistry
 from .tracing import TraceRecorder
 from .memory import MemoryStore
+from .skills import SkillRegistry
 from .errors import AgentTimeoutError, DependencyFailedError
 
 Role = Literal["orchestrator", "leaf"]
@@ -96,7 +97,9 @@ class AgentFactory:
                  max_depth: int = 1, history_limit: int = 40, max_rounds: int = 8,
                  synchronize_tools: bool = True, trace: TraceRecorder | None = None,
                  memory: MemoryStore | None = None, shared_memory_namespace: str | None = None,
-                 memory_top_k: int = 5, memory_char_budget: int = 2_000):
+                 memory_top_k: int = 5, memory_char_budget: int = 2_000,
+                 skills: SkillRegistry | None = None, max_skills: int = 8,
+                 skill_char_budget: int = 8_000):
         if max_depth < 0 or history_limit < 1 or max_rounds < 1:
             raise ValueError("Invalid factory limits")
         if memory is None and shared_memory_namespace is not None:
@@ -110,6 +113,12 @@ class AgentFactory:
                 not isinstance(memory_char_budget, int) or isinstance(memory_char_budget, bool) or
                 memory_char_budget < 1):
             raise ValueError("Invalid memory retrieval limits")
+        if (not isinstance(max_skills, int) or isinstance(max_skills, bool) or max_skills < 1 or
+                not isinstance(skill_char_budget, int) or isinstance(skill_char_budget, bool) or
+                skill_char_budget < 1):
+            raise ValueError("Invalid Skill limits")
+        if skills is not None and tools.get("load_skill") is not None:
+            raise ValueError("Tool name load_skill is reserved when Skills are enabled")
         self.llm_factory, self.tools = llm_factory, tools
         self.max_depth, self.history_limit, self.max_rounds = max_depth, history_limit, max_rounds
         self.synchronize_tools = synchronize_tools
@@ -117,6 +126,7 @@ class AgentFactory:
         self.memory = memory
         self.shared_memory_namespace = shared_memory_namespace
         self.memory_top_k, self.memory_char_budget = memory_top_k, memory_char_budget
+        self.skills, self.max_skills, self.skill_char_budget = skills, max_skills, skill_char_budget
         self._identity_lock = Lock()
         self._identities: dict[str, AgentIdentity] = {}
 
@@ -138,7 +148,9 @@ class AgentFactory:
                       memory=self.memory,
                       memory_namespace=self.shared_memory_namespace if self.memory is not None and
                       self.shared_memory_namespace is not None else None,
-                      memory_top_k=self.memory_top_k, memory_char_budget=self.memory_char_budget)
+                      memory_top_k=self.memory_top_k, memory_char_budget=self.memory_char_budget,
+                      skills=self.skills, max_skills=self.max_skills,
+                      skill_char_budget=self.skill_char_budget)
         with self._identity_lock:
             self._identities[identity.agent_id] = identity.model_copy(deep=True)
         return AgentHandle(identity, agent, self)

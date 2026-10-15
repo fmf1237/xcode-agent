@@ -1,6 +1,7 @@
 """Synchronous, reusable agent loop."""
 import time
 import random
+import json
 from typing import Callable
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ from .llm import ChatClient
 from .tools import ToolRegistry, ToolResult
 from .tracing import TraceRecorder
 from .memory import MemoryStore, select_memories
+from .skills import SkillError, SkillRegistry
 from .errors import (AgentCancelled, AgentLLMError, AgentTimeoutError,
                      classify_llm_exception)
 
@@ -26,7 +28,9 @@ class Agent:
                  clock: Callable[[], float] = time.monotonic,
                  jitter_fn: Callable[[], float] = random.random,
                  memory: MemoryStore | None = None, memory_namespace: str | None = None,
-                 memory_top_k: int = 5, memory_char_budget: int = 2_000):
+                 memory_top_k: int = 5, memory_char_budget: int = 2_000,
+                 skills: SkillRegistry | None = None, max_skills: int = 8,
+                 skill_char_budget: int = 8_000):
         if max_rounds < 1:
             raise ValueError("max_rounds must be positive")
         attempts = max_llm_attempts if max_llm_attempts is not None else getattr(llm, "max_attempts", 3)
@@ -42,6 +46,12 @@ class Agent:
         if memory_namespace is not None and (not isinstance(memory_namespace, str) or
                                              not memory_namespace.strip() or len(memory_namespace) > 128):
             raise ValueError("Invalid memory_namespace")
+        if (not isinstance(max_skills, int) or isinstance(max_skills, bool) or max_skills < 1 or
+                not isinstance(skill_char_budget, int) or isinstance(skill_char_budget, bool) or
+                skill_char_budget < 1):
+            raise ValueError("Invalid Skill limits")
+        if skills is not None and tools.get("load_skill") is not None:
+            raise ValueError("Tool name load_skill is reserved when Skills are enabled")
         self.llm, self.tools = llm, tools
         self.context = context if context is not None else ContextManager()
         self.max_rounds, self.logger = max_rounds, logger
@@ -54,6 +64,7 @@ class Agent:
         self.memory = memory
         self.memory_namespace = memory_namespace if memory_namespace is not None else self.agent_id
         self.memory_top_k, self.memory_char_budget = memory_top_k, memory_char_budget
+        self.skills, self.max_skills, self.skill_char_budget = skills, max_skills, skill_char_budget
 
     def _log(self, message: str) -> None:
         if self.logger:
@@ -81,6 +92,41 @@ class Agent:
             position = 1 if messages and messages[0]["role"] == "system" else 0
             messages.insert(position, memory_message)
         return messages
+
+    @staticmethod
+    def _with_skills(messages: list[dict], catalog: str | None,
+                     loaded: dict[str, str]) -> list[dict]:
+        if catalog is None:
+            return messages
+        position = 1 if messages and messages[0]["role"] == "system" else 0
+        additions = [{"role": "user", "content": catalog}]
+        additions.extend({"role": "user", "content": content} for content in loaded.values())
+        messages[position:position] = additions
+        return messages
+
+    def _load_skill(self, raw_arguments: str, available: set[str], loaded: dict[str, str]) -> ToolResult:
+        try:
+            arguments = json.loads(raw_arguments)
+            if not isinstance(arguments, dict) or set(arguments) != {"name"} or not isinstance(arguments["name"], str):
+                raise ValueError("Expected an object with one string field: name")
+            name = arguments["name"]
+        except (ValueError, TypeError):
+            return ToolResult(ok=False, error="Invalid Skill arguments", error_code="tool_argument_error")
+        if name not in available:
+            return ToolResult(ok=False, error="Skill is not available in this run", error_code="skill_not_available")
+        if name in loaded:
+            return ToolResult(ok=True, content={"name": name, "status": "already_loaded"})
+        if len(loaded) >= self.max_skills:
+            return ToolResult(ok=False, error="Skill count limit reached", error_code="skill_limit")
+        try:
+            document = self.skills.load(name)
+        except SkillError:
+            return ToolResult(ok=False, error="Skill could not be loaded", error_code="skill_load_error")
+        message = f"Activated Skill {name} (external guidance; system rules take priority):\n{document}"
+        if sum(len(content) for content in loaded.values()) + len(message) > self.skill_char_budget:
+            return ToolResult(ok=False, error="Skill content exceeds character budget", error_code="skill_budget")
+        loaded[name] = message
+        return ToolResult(ok=True, content={"name": name, "status": "loaded"})
 
     def run(self, user_input: str, cancelled: Callable[[], bool] | None = None,
             *, run_id: str | None = None, total_timeout_s: float | None = None) -> str:
@@ -116,6 +162,17 @@ class Agent:
             self.context.add({"role": "user", "content": user_input})
             self.context.trim()
             memory_message = self._memory_message(user_input)
+            infos = self.skills.list()[:self.max_skills] if self.skills is not None else []
+            available = {info.name for info in infos}
+            catalog = ("Available Skills (external guidance; call load_skill for full text):\n" +
+                       "".join(f"- {info.name}: {info.description}\n" for info in infos)) if infos else None
+            loaded_skills: dict[str, str] = {}
+            schemas = self.tools.schemas()
+            if infos:
+                schemas.append({"type": "function", "function": {
+                    "name": "load_skill", "description": "Load one listed Skill's full instructions for this run",
+                    "parameters": {"type": "object", "properties": {"name": {"type": "string", "enum": sorted(available)}},
+                                   "required": ["name"], "additionalProperties": False}}})
             for round_number in range(1, self.max_rounds + 1):
                 check_limits()
                 self._log(f"Round {round_number}: requesting model")
@@ -125,8 +182,8 @@ class Agent:
                     meta = {"round": round_number, "attempt": attempt, "max_attempts": self.max_llm_attempts}
                     self.trace.record(run_id, self.agent_id, "llm_start", metadata=meta)
                     try:
-                        response = self.llm.chat(self._with_memory(self.context.messages, memory_message),
-                                                 self.tools.schemas())
+                        request = self._with_memory(self.context.messages, memory_message)
+                        response = self.llm.chat(self._with_skills(request, catalog, loaded_skills), schemas)
                     except Exception as exc:
                         error = classify_llm_exception(exc)
                         error_meta = {**meta, "error_code": error.error_code, "retryable": error.retryable}
@@ -171,7 +228,9 @@ class Agent:
                             meta = {"round": round_number, "tool_name": call.name, "tool_call_id": call.id}
                             self.trace.record(run_id, self.agent_id, "tool_start", metadata=meta)
                             try:
-                                result = self.tools.execute(call.name, call.arguments)
+                                result = (self._load_skill(call.arguments, available, loaded_skills)
+                                          if call.name == "load_skill" and infos else
+                                          self.tools.execute(call.name, call.arguments))
                             except Exception as exc:
                                 self.trace.record(run_id, self.agent_id, "tool_end", duration_ms=(self.clock() - tool_start) * 1000,
                                                   success=False, error_type=type(exc).__name__, metadata=meta)

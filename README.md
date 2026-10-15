@@ -1,6 +1,6 @@
-# xcode-agent（第一阶段）
+# xcode-agent
 
-一个使用原生 Python 实现的 Agent 项目。第一阶段支持 OpenAI 兼容 Chat Completions、连续会话、多轮及并列工具调用和受限只读文件工具。第二阶段增加结构化 DAG、子 Agent 角色与深度、并行派发及结果回传。长期记忆、Skills 和 MCP 尚未实现。
+一个使用原生 Python 实现的 Agent 项目。支持 OpenAI 兼容 Chat Completions、连续会话、多轮及并列工具调用、受限只读文件工具、Multi-Agent DAG、可选 SQLite FTS5 长期记忆和本地 Skills。MCP 尚未实现。
 
 ## 环境与安装
 
@@ -42,6 +42,10 @@ python -m pytest -q
 
 第四阶段增加基于标准库 SQLite FTS5 的显式记忆存储。默认关闭，不会自动保存对话。调用方可用 `MemoryStore("memory.sqlite3").save("project", "文本")` 保存，再用 `Agent(..., memory=store, memory_namespace="project")` 在运行时按关键词检索。多 Agent 默认各用自身 ID 隔离 namespace，只有配置 `AgentFactory(..., shared_memory_namespace="project")` 才共享。接口和中文分词限制见 [长期记忆学习笔记](docs/phase4-memory-study.md)。
 
+## 可选本地 Skills
+
+将每个 Skill 放在独立子目录的 `SKILL.md` 中，并在代码中创建 `SkillRegistry(skills_root)`，再传给 `Agent(..., skills=registry)` 或 `AgentFactory(..., skills=registry)`。默认关闭。模型首先只看到名称和描述；调用内置 `load_skill` 后才在本轮执行中临时获得全文。Skill 不能自动安装、运行脚本或获取额外工具权限。格式和完整示例见 [Skills 学习笔记](docs/phase5-skills-study.md)。
+
 ## 扩展接口
 
-`Agent` 仅依赖具有 `chat(messages, tools) -> LLMResponse` 方法的客户端及 `ToolRegistry`。`AgentFactory` 通过客户端工厂创建独立子 Agent；`AgentHandle.dispatch()` 接收 `TaskNode` 列表并按输入顺序返回 `SubAgentResult`，`dispatch_and_summarize()` 可将结果送回主 Agent 推理。工具通过 Pydantic 参数模型和 Python 函数注册；未来工具来源可以使用同一注册接口。当前上下文仅保存在内存中。
+`Agent` 仅依赖具有 `chat(messages, tools) -> LLMResponse` 方法的客户端及 `ToolRegistry`。`AgentFactory` 通过客户端工厂创建独立子 Agent；`AgentHandle.dispatch()` 接收 `TaskNode` 列表并按输入顺序返回 `SubAgentResult`，`dispatch_and_summarize()` 可将结果送回主 Agent 推理。工具通过 Pydantic 参数模型和 Python 函数注册；未来工具来源可以使用同一注册接口。会话上下文仅保存在内存中。
