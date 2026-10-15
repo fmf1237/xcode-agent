@@ -32,10 +32,11 @@ python main.py
 ```powershell
 python examples/fake_demo.py
 python examples/phase2_benchmark.py
+python examples/phase3_benchmark.py
 python -m pytest -q
 ```
 
-演示与基准都不需要 API Key 或网络。示例文件是 `examples/demo.txt`。模块与消息流程见 [第一阶段学习笔记](docs/phase1-study.md)、[第二阶段学习笔记](docs/phase2-study.md)、[Trace 学习笔记](docs/phase3-trace-study.md) 和 [可靠性学习笔记](docs/phase3-reliability-study.md)。
+演示与离线评测都不需要 API Key 或网络。第三阶段评测结果写入 `reports/phase3/benchmark.json` 和 `reports/phase3/benchmark.md`，仅代表固定 Mock 工作负载。真实 API 冒烟测试须手动运行 `python examples/phase3_live_smoke.py --live`；没有配置 Key 与模型时不会发送请求。示例文件是 `examples/demo.txt`。模块与消息流程见 [第一阶段学习笔记](docs/phase1-study.md)、[第二阶段学习笔记](docs/phase2-study.md)、[Trace 学习笔记](docs/phase3-trace-study.md)、[可靠性学习笔记](docs/phase3-reliability-study.md) 和 [评测学习笔记](docs/phase3-benchmark-study.md)。
 
 ## 扩展接口
 

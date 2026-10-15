@@ -1,0 +1,403 @@
+{
+  "kind": "offline_mock_benchmark",
+  "generated_at_utc": "2026-10-15T09:10:40.463514+00:00",
+  "configuration": {
+    "task_counts": [
+      2,
+      4,
+      8
+    ],
+    "repeats": 3,
+    "max_workers": 4,
+    "mock_llm_delay_ms": 15,
+    "mock_tool_delay_ms": 5,
+    "mock_retry_after_ms": 5,
+    "tool_handlers_synchronized": false
+  },
+  "cases": [
+    {
+      "task_count": 2,
+      "topology": "independent",
+      "failure_mode": "normal",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 76.486,
+        "wall_ms_samples": [
+          78.885,
+          76.486,
+          75.798
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 4.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 2.0
+      },
+      "parallel": {
+        "workers": 2,
+        "wall_ms_median": 38.695,
+        "wall_ms_samples": [
+          38.695,
+          38.237,
+          38.733
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 4.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 2.0
+      },
+      "speedup": 1.977
+    },
+    {
+      "task_count": 2,
+      "topology": "independent",
+      "failure_mode": "one_mock_429_per_agent",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 118.942,
+        "wall_ms_samples": [
+          117.855,
+          119.815,
+          118.942
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 6.0,
+        "retries_per_run": 2.0,
+        "tool_calls_per_run": 2.0
+      },
+      "parallel": {
+        "workers": 2,
+        "wall_ms_median": 59.725,
+        "wall_ms_samples": [
+          59.441,
+          59.879,
+          59.725
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 6.0,
+        "retries_per_run": 2.0,
+        "tool_calls_per_run": 2.0
+      },
+      "speedup": 1.991
+    },
+    {
+      "task_count": 2,
+      "topology": "layered_dag",
+      "failure_mode": "normal",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 74.752,
+        "wall_ms_samples": [
+          74.752,
+          75.458,
+          74.598
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 4.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 2.0
+      },
+      "parallel": {
+        "workers": 2,
+        "wall_ms_median": 73.992,
+        "wall_ms_samples": [
+          74.666,
+          73.607,
+          73.992
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 4.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 2.0
+      },
+      "speedup": 1.01
+    },
+    {
+      "task_count": 2,
+      "topology": "layered_dag",
+      "failure_mode": "one_mock_429_per_agent",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 117.88,
+        "wall_ms_samples": [
+          118.01,
+          116.779,
+          117.88
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 6.0,
+        "retries_per_run": 2.0,
+        "tool_calls_per_run": 2.0
+      },
+      "parallel": {
+        "workers": 2,
+        "wall_ms_median": 117.52,
+        "wall_ms_samples": [
+          117.52,
+          117.462,
+          117.838
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 6.0,
+        "retries_per_run": 2.0,
+        "tool_calls_per_run": 2.0
+      },
+      "speedup": 1.003
+    },
+    {
+      "task_count": 4,
+      "topology": "independent",
+      "failure_mode": "normal",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 150.981,
+        "wall_ms_samples": [
+          149.053,
+          151.446,
+          150.981
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 8.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 4.0
+      },
+      "parallel": {
+        "workers": 4,
+        "wall_ms_median": 38.696,
+        "wall_ms_samples": [
+          38.696,
+          39.578,
+          38.485
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 8.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 4.0
+      },
+      "speedup": 3.902
+    },
+    {
+      "task_count": 4,
+      "topology": "independent",
+      "failure_mode": "one_mock_429_per_agent",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 235.607,
+        "wall_ms_samples": [
+          235.926,
+          235.607,
+          233.395
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 12.0,
+        "retries_per_run": 4.0,
+        "tool_calls_per_run": 4.0
+      },
+      "parallel": {
+        "workers": 4,
+        "wall_ms_median": 60.08,
+        "wall_ms_samples": [
+          60.694,
+          60.08,
+          59.923
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 12.0,
+        "retries_per_run": 4.0,
+        "tool_calls_per_run": 4.0
+      },
+      "speedup": 3.922
+    },
+    {
+      "task_count": 4,
+      "topology": "layered_dag",
+      "failure_mode": "normal",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 151.141,
+        "wall_ms_samples": [
+          151.188,
+          149.819,
+          151.141
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 8.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 4.0
+      },
+      "parallel": {
+        "workers": 4,
+        "wall_ms_median": 76.048,
+        "wall_ms_samples": [
+          77.456,
+          75.726,
+          76.048
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 8.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 4.0
+      },
+      "speedup": 1.987
+    },
+    {
+      "task_count": 4,
+      "topology": "layered_dag",
+      "failure_mode": "one_mock_429_per_agent",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 236.681,
+        "wall_ms_samples": [
+          236.517,
+          236.681,
+          237.729
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 12.0,
+        "retries_per_run": 4.0,
+        "tool_calls_per_run": 4.0
+      },
+      "parallel": {
+        "workers": 4,
+        "wall_ms_median": 118.955,
+        "wall_ms_samples": [
+          118.977,
+          118.955,
+          117.831
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 12.0,
+        "retries_per_run": 4.0,
+        "tool_calls_per_run": 4.0
+      },
+      "speedup": 1.99
+    },
+    {
+      "task_count": 8,
+      "topology": "independent",
+      "failure_mode": "normal",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 300.429,
+        "wall_ms_samples": [
+          300.429,
+          298.83,
+          301.854
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 16.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 8.0
+      },
+      "parallel": {
+        "workers": 4,
+        "wall_ms_median": 77.821,
+        "wall_ms_samples": [
+          77.003,
+          77.821,
+          78.603
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 16.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 8.0
+      },
+      "speedup": 3.861
+    },
+    {
+      "task_count": 8,
+      "topology": "independent",
+      "failure_mode": "one_mock_429_per_agent",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 468.433,
+        "wall_ms_samples": [
+          473.08,
+          468.424,
+          468.433
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 24.0,
+        "retries_per_run": 8.0,
+        "tool_calls_per_run": 8.0
+      },
+      "parallel": {
+        "workers": 4,
+        "wall_ms_median": 120.8,
+        "wall_ms_samples": [
+          138.571,
+          120.8,
+          120.727
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 24.0,
+        "retries_per_run": 8.0,
+        "tool_calls_per_run": 8.0
+      },
+      "speedup": 3.878
+    },
+    {
+      "task_count": 8,
+      "topology": "layered_dag",
+      "failure_mode": "normal",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 302.062,
+        "wall_ms_samples": [
+          300.737,
+          303.213,
+          302.062
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 16.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 8.0
+      },
+      "parallel": {
+        "workers": 4,
+        "wall_ms_median": 78.504,
+        "wall_ms_samples": [
+          79.124,
+          78.504,
+          78.499
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 16.0,
+        "retries_per_run": 0.0,
+        "tool_calls_per_run": 8.0
+      },
+      "speedup": 3.848
+    },
+    {
+      "task_count": 8,
+      "topology": "layered_dag",
+      "failure_mode": "one_mock_429_per_agent",
+      "serial": {
+        "workers": 1,
+        "wall_ms_median": 469.412,
+        "wall_ms_samples": [
+          469.412,
+          468.937,
+          470.312
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 24.0,
+        "retries_per_run": 8.0,
+        "tool_calls_per_run": 8.0
+      },
+      "parallel": {
+        "workers": 4,
+        "wall_ms_median": 119.523,
+        "wall_ms_samples": [
+          119.523,
+          120.495,
+          119.126
+        ],
+        "success_rate": 1.0,
+        "llm_attempts_per_run": 24.0,
+        "retries_per_run": 8.0,
+        "tool_calls_per_run": 8.0
+      },
+      "speedup": 3.927
+    }
+  ]
+}

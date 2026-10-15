@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from .context import ContextManager
 from .llm import ChatClient
-from .tools import ToolRegistry
+from .tools import ToolRegistry, ToolResult
 from .tracing import TraceRecorder
 from .errors import (AgentCancelled, AgentLLMError, AgentTimeoutError,
                      classify_llm_exception)
@@ -121,27 +121,39 @@ class Agent:
                     calls = [{"id": call.id, "type": "function", "function": {"name": call.name,
                               "arguments": call.arguments}} for call in response.tool_calls]
                     self.context.add({"role": "assistant", "content": response.content, "tool_calls": calls})
-                    for call in response.tool_calls:
-                        check_limits()
-                        self._log(f"Tool {call.name} ({call.id})")
-                        tool_start = self.clock()
-                        meta = {"round": round_number, "tool_name": call.name, "tool_call_id": call.id}
-                        self.trace.record(run_id, self.agent_id, "tool_start", metadata=meta)
-                        try:
-                            result = self.tools.execute(call.name, call.arguments)
-                        except Exception as exc:
-                            self.trace.record(run_id, self.agent_id, "tool_end", duration_ms=(self.clock() - tool_start) * 1000,
-                                              success=False, error_type=type(exc).__name__, metadata=meta)
-                            raise
-                        else:
-                            self.trace.record(run_id, self.agent_id, "tool_end", duration_ms=(self.clock() - tool_start) * 1000,
-                                              success=result.ok, error_type=None if result.ok else
-                                              ("ToolArgumentError" if result.error_code == "tool_argument_error" else
-                                               "ToolExecutionError" if result.error_code == "tool_execution_error" else
-                                               "ToolResultError"),
-                                              metadata={**meta, "error_code": result.error_code})
-                        self.context.add({"role": "tool", "tool_call_id": call.id, "content": result.as_message()})
-                        self._log(f"Tool result ({call.id}): {result.as_message()}")
+                    completed = 0
+                    try:
+                        for call in response.tool_calls:
+                            check_limits()
+                            self._log(f"Tool {call.name} ({call.id})")
+                            tool_start = self.clock()
+                            meta = {"round": round_number, "tool_name": call.name, "tool_call_id": call.id}
+                            self.trace.record(run_id, self.agent_id, "tool_start", metadata=meta)
+                            try:
+                                result = self.tools.execute(call.name, call.arguments)
+                            except Exception as exc:
+                                self.trace.record(run_id, self.agent_id, "tool_end", duration_ms=(self.clock() - tool_start) * 1000,
+                                                  success=False, error_type=type(exc).__name__, metadata=meta)
+                                raise
+                            else:
+                                self.trace.record(run_id, self.agent_id, "tool_end", duration_ms=(self.clock() - tool_start) * 1000,
+                                                  success=result.ok, error_type=None if result.ok else
+                                                  ("ToolArgumentError" if result.error_code == "tool_argument_error" else
+                                                   "ToolExecutionError" if result.error_code == "tool_execution_error" else
+                                                   "ToolResultError"),
+                                                  metadata={**meta, "error_code": result.error_code})
+                            message = result.as_message()
+                            self.context.add({"role": "tool", "tool_call_id": call.id, "content": message})
+                            completed += 1
+                            self._log(f"Tool result ({call.id}): {message}")
+                    except Exception:
+                        # The provider requires one tool reply for every declared call.
+                        # Keep history valid while leaving unstarted tools untouched.
+                        for pending in response.tool_calls[completed:]:
+                            self.context.add({"role": "tool", "tool_call_id": pending.id,
+                                              "content": ToolResult(ok=False, error="Tool call not completed").as_message()})
+                        self.context.trim()
+                        raise
                     self.context.trim()
                     continue
                 answer = response.content or ""
