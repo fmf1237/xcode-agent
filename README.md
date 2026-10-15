@@ -1,6 +1,6 @@
 # xcode-agent
 
-一个使用原生 Python 实现的 Agent 项目。支持 OpenAI 兼容 Chat Completions、连续会话、多轮及并列工具调用、受限只读文件工具、Multi-Agent DAG、可选 SQLite FTS5 长期记忆和本地 Skills。MCP 尚未实现。
+一个使用原生 Python 实现的 Agent 项目。支持 OpenAI 兼容 Chat Completions、连续会话、多轮及并列工具调用、受限只读文件工具、Multi-Agent DAG、可选 SQLite FTS5 长期记忆、本地 Skills 和可信本地 stdio MCP 工具。
 
 ## 环境与安装
 
@@ -33,6 +33,7 @@ python main.py
 python examples/fake_demo.py
 python examples/phase2_benchmark.py
 python examples/phase3_benchmark.py
+python examples/mcp_demo_client.py
 python -m pytest -q
 ```
 
@@ -45,6 +46,10 @@ python -m pytest -q
 ## 可选本地 Skills
 
 将每个 Skill 放在独立子目录的 `SKILL.md` 中，并在代码中创建 `SkillRegistry(skills_root)`，再传给 `Agent(..., skills=registry)` 或 `AgentFactory(..., skills=registry)`。默认关闭。模型首先只看到名称和描述；调用内置 `load_skill` 后才在本轮执行中临时获得全文。Skill 不能自动安装、运行脚本或获取额外工具权限。格式和完整示例见 [Skills 学习笔记](docs/phase5-skills-study.md)。
+
+## 可选本地 MCP 工具
+
+`MCPServerConfig` 中显式指定可信 Server 的命令、参数和 `allowed_tools`。在 `with MCPClient(config) as client:` 内调用 `client.register_tools(registry)`，然后运行 Agent；离开 `with` 时关闭 ClientSession 和 stdio 子进程。示例 `python examples/mcp_demo_client.py` 使用本地 FastMCP 的只读 `add`、`echo` 工具和 Mock LLM，无需 API Key。工具名称按 `mcp__server_name__tool_name` 隔离；MCP 调用不会自动重试。详见 [MCP 学习笔记](docs/phase5-mcp-study.md)。
 
 ## 扩展接口
 

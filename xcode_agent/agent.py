@@ -245,7 +245,10 @@ class Agent:
                             message = result.as_message()
                             self.context.add({"role": "tool", "tool_call_id": call.id, "content": message})
                             completed += 1
-                            self._log(f"Tool result ({call.id}): {message}")
+                            if self.tools.is_external(call.name):
+                                self._log(f"MCP tool result ({call.id}): ok={result.ok}, error_code={result.error_code}")
+                            else:
+                                self._log(f"Tool result ({call.id}): {message}")
                     except Exception:
                         # The provider requires one tool reply for every declared call.
                         # Keep history valid while leaving unstarted tools untouched.

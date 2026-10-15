@@ -7,7 +7,7 @@ name = "xcode-agent"
 version = "0.1.0"
 description = "A small, provider-independent Python agent foundation"
 requires-python = ">=3.11"
-dependencies = ["openai>=1.0,<3", "pydantic>=2,<3", "python-dotenv>=1,<2"]
+dependencies = ["openai>=1.0,<3", "pydantic>=2,<3", "python-dotenv>=1,<2", "mcp>=1.30,<2", "jsonschema>=4,<5"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
